@@ -28,25 +28,38 @@ jobs:
       - name: Run tests
         run: npm test
 
-  build-and-push:
+  build:
     needs: test
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t ghcr.io/${{ github.repository }}:${{ github.sha }} .
+
+      - name: Save image
+        run: docker save ghcr.io/${{ github.repository }}:${{ github.sha }} > image.tar
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: image.tar
+
+  push:
+    needs: build
+    runs-on: ubuntu-latest
     permissions:
-      contents: read
       packages: write
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: docker-image
 
-      - name: Login to GitHub Container Registry
+      - name: Load image
+        run: docker load < image.tar
+
+      - name: Login to GHCR
         run: echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      - name: Build Docker image
-        run: |
-          docker build -t ghcr.io/${{ github.repository }}:${{ github.sha }} .
-          docker tag ghcr.io/${{ github.repository }}:${{ github.sha }} ghcr.io/${{ github.repository }}:latest
-
-      - name: Push to GHCR
-        run: |
-          docker push ghcr.io/${{ github.repository }}:${{ github.sha }}
-          docker push ghcr.io/${{ github.repository }}:latest
+      - name: Push image
+        run: docker push ghcr.io/${{ github.repository }}:${{ github.sha }}
