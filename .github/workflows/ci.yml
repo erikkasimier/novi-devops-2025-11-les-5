@@ -1,7 +1,4 @@
-# Startpunt CI Workflow
-# TODO: Breid uit naar multi-job workflow met Docker build & push
-
-name: CI
+name: CI/CD Pipeline
 
 on:
   push:
@@ -12,7 +9,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    
+    strategy:
+      matrix:
+        node-version: [ 18, 20, 22 ]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -20,7 +19,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ matrix.node-version }}
           cache: 'npm'
 
       - name: Install dependencies
@@ -32,14 +31,42 @@ jobs:
       - name: Run tests
         run: npm test
 
-  # TODO: Voeg build job toe
-  # build:
-  #   needs: test
-  #   runs-on: ubuntu-latest
-  #   permissions:
-  #     packages: write
-  #   steps:
-  #     - Checkout
-  #     - Login to GHCR
-  #     - Build Docker image
-  #     - Push to GHCR
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: |
+          docker build -t ghcr.io/${{ github.repository }}:${{ github.sha }} .
+          docker tag ghcr.io/${{ github.repository }}:${{ github.sha }} ghcr.io/${{ github.repository }}:latest
+
+      - name: Save image
+        run: docker save ghcr.io/${{ github.repository }}:${{ github.sha }} ghcr.io/${{ github.repository }}:latest > image.tar
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: image.tar
+
+  push:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Load image
+        run: docker load < image.tar
+
+      - name: Login to GHCR
+        run: echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Push image
+        run: |
+          docker push ghcr.io/${{ github.repository }}:${{ github.sha }}
+          docker push ghcr.io/${{ github.repository }}:latest
